@@ -1,103 +1,198 @@
-import Image from "next/image";
+"use client";
+import { useState, useEffect } from "react";
+import { ethers } from "ethers";
+import { useWeb3 } from "@/Context/Web3Context";
+import { contractAddress, contractABI } from "@/config";
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [name, setName] = useState("");
+  const [twitter, setTwitter] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  const [result, setResult] = useState<{
+    name: string;
+    twitter: string;
+    score: string;
+  } | null>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const { account, signer, provider, connectWallet } = useWeb3();
+
+  useEffect(() => {
+    if (!provider || !account) return;
+
+    console.log("✅ Setting up event listener for account:", account);
+
+    const contract = new ethers.Contract(
+      contractAddress,
+      contractABI,
+      provider
+    );
+
+    const handleScoredEvent = (
+      user: string,
+      name: string,
+      twitter: string,
+      score: bigint
+    ) => {
+      // We add a check here to ensure we only update the UI for the correct user
+      if (user.toLowerCase() === account.toLowerCase()) {
+        console.log("🔥 Scored event received for our user!", {
+          user,
+          name,
+          twitter,
+          score: score.toString(),
+        });
+
+        setResult({
+          name: name,
+          twitter: twitter,
+          score: score.toString(),
+        });
+        setStatus("✅ Success! Random number received.");
+      } else {
+        console.log("Ignoring event for a different user:", user);
+      }
+    };
+
+    // --- DEBUGGING FIX: REMOVE THE FILTER ---
+    // We listen for all "Scored" events. This bypasses any potential
+    // issues with address checksums or filter mismatches.
+    console.log(
+      ">>>>> DEBUG: Listening for ALL 'Scored' events to bypass the filter. <<<<<"
+    );
+    contract.on("Scored", handleScoredEvent);
+
+    // Make sure the cleanup function matches the listener we set up.
+    return () => {
+      console.log("🧹 Cleaning up generic 'Scored' event listener.");
+      contract.off("Scored", handleScoredEvent);
+    };
+  }, [provider, account]);
+
+  const truncateAddress = (address: string) => {
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  };
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!signer) {
+      alert("Please connect your wallet first.");
+      return;
+    }
+    setResult(null);
+    setStatus("1/4: Preparing transaction...");
+    try {
+      const contract = new ethers.Contract(
+        contractAddress,
+        contractABI,
+        signer
+      );
+      setStatus("2/4: Please approve the transaction in your wallet...");
+      const tx = await contract.requestScore(name, twitter);
+      setStatus("3/4: Transaction sent! Waiting for it to be mined...");
+      await tx.wait();
+      setStatus(
+        "4/4: Transaction mined! Waiting for Chainlink VRF... (This can take a few minutes)"
+      );
+    } catch (err: unknown) {
+      console.error("Transaction failed:", err);
+      const errorMessage =
+        (err as { reason?: string; message?: string }).reason ||
+        (err as Error).message ||
+        "An unknown error occurred.";
+      setStatus(`❌ Error: ${errorMessage}`);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-white text-gray-900">
+      <div className="max-w-md mx-auto p-8 bg-white border border-gray-200 rounded shadow-lg pt-20 text-gray-900">
+        <div className="flex justify-end mb-4">
+          {account ? (
+            <p className="px-4 py-2 bg-green-100 text-green-800 rounded-md text-sm font-mono">
+              Connected: {truncateAddress(account)}
+            </p>
+          ) : (
+            <button
+              onClick={connectWallet}
+              className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors"
+            >
+              Connect Wallet
+            </button>
+          )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+
+        <h1 className="text-2xl mb-4 font-bold">Get Your Random Score</h1>
+        <p className="text-gray-600 mb-6">
+          Submit your details to get a random score from 1-100 powered by
+          Chainlink VRF.
+        </p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="name" className="block mb-1 font-medium">
+              Name
+            </label>
+            <input
+              id="name"
+              className="border border-gray-300 p-2 w-full rounded focus:ring-2 focus:ring-blue-500"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              disabled={!account}
+            />
+          </div>
+          <div>
+            <label htmlFor="twitter" className="block mb-1 font-medium">
+              Twitter Handle
+            </label>
+            <input
+              id="twitter"
+              className="border border-gray-300 p-2 w-full rounded focus:ring-2 focus:ring-blue-500"
+              type="text"
+              value={twitter}
+              onChange={(e) => setTwitter(e.target.value)}
+              required
+              disabled={!account}
+            />
+          </div>
+          <button
+            type="submit"
+            className="w-full py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:bg-gray-400"
+            disabled={!account || status?.includes("Waiting")}
+          >
+            Submit to Contract
+          </button>
+        </form>
+        {status && <p className="mt-4 text-sm font-semibold">{status}</p>}
+
+        {result && (
+          <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <h2 className="text-xl font-bold text-green-800">Your Score!</h2>
+            <div className="mt-2 space-y-1 text-gray-700">
+              <p>
+                <strong>Name:</strong> {result.name}
+              </p>
+              <p>
+                <strong>Twitter:</strong> {result.twitter}
+              </p>
+              <p className="text-2xl font-mono bg-gray-100 p-2 text-center rounded">
+                <strong>Random Score:</strong> {result.score}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex justify-center mt-8">
+        <div className="w-64 h-32 overflow-hidden rounded">
+          <img
+            src="/chainlinkvrf.gif"
+            alt="Chainlink VRF"
+            className="w-full h-full object-cover object-center"
+            style={{ objectPosition: "center" }}
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+        </div>
+      </div>
     </div>
   );
 }
