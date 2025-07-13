@@ -1,5 +1,5 @@
 // @/config/index.ts
-export const contractAddress = "0x6D3762deCc9d1fD65a428aBF5A02663F10345Cd2"; // Replace with your deployed contract address
+export const contractAddress = "your deployed contract address"; // Replace with your deployed contract address
 export const contractABI = [
   {
     inputs: [
